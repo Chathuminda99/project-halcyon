@@ -1,0 +1,60 @@
+---
+# Promote DC01 to a new forest/domain, set up DNS, and lay out the OU tree.
+# Uses the microsoft.ad collection (successor to community.general win_domain).
+
+- name: Install AD-Domain-Services + tools features
+  ansible.windows.win_feature:
+    name:
+      - AD-Domain-Services
+      - DNS
+      - RSAT-ADDS
+      - RSAT-AD-PowerShell
+      - GPMC
+    include_management_tools: true
+    state: present
+  register: dc_feature_install
+
+- name: Promote to new forest (idempotent - noop if already a DC)
+  microsoft.ad.domain:
+    dns_domain_name: "{{ domain_name }}"
+    domain_netbios_name: "{{ domain_netbios }}"
+    safe_mode_password: "{{ halcyon_da_breakglass_password }}"
+    install_dns: true
+    reboot: true
+  register: forest_promo
+
+- name: Wait for DC to come back after promotion reboot
+  ansible.builtin.wait_for_connection:
+    delay: 30
+    timeout: 600
+  when: forest_promo.reboot_required | default(false)
+
+- name: Create OU structure
+  microsoft.ad.ou:
+    name: "{{ item.split(',')[0].split('=')[1] }}"
+    path: "{{ item.split(',', 1)[1] }}"
+    state: present
+  loop: "{{ ou_layout }}"
+  when: forest_promo is succeeded
+
+- name: Create security groups
+  microsoft.ad.group:
+    name: "{{ item.name }}"
+    scope: global
+    category: security
+    path: "OU=Staff,OU=Halcyon,{{ domain_dn }}"
+    description: "{{ item.desc | default('') }}"
+    state: present
+  loop: "{{ groups | rejectattr('builtin', 'defined') | list }}"
+
+- name: Create Domain-Admins-only confidential share for the DA flag
+  ansible.windows.win_shell: |
+    New-Item -ItemType Directory -Path 'C:\Shares\Confidential' -Force | Out-Null
+    New-SmbShare -Name "confidential" -Path 'C:\Shares\Confidential' -FullAccess "{{ domain_netbios }}\Domain Admins" -ErrorAction SilentlyContinue
+    icacls 'C:\Shares\Confidential' /inheritance:r /grant "{{ domain_netbios }}\Domain Admins:(OI)(CI)F" /grant "SYSTEM:(OI)(CI)F"
+    Set-Content -Path 'C:\Shares\Confidential\flag_domain_admin.txt' -Value "{{ halcyon_flags.domain_admin }}"
+  changed_when: true
+
+- name: Disable LLMNR/NBT-NS per posture toggle is handled in posture role (no-op placeholder)
+  ansible.builtin.debug:
+    msg: "LLMNR/NBT-NS toggling handled by roles/posture"

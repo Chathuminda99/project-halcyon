@@ -1,0 +1,72 @@
+---
+# SRV01: install MSSQL Express (real install left to a chocolatey step since
+# there's no first-party Ansible MSSQL-installer module), configure the
+# service account/SPN, enable xp_cmdshell, and optionally add a linked server.
+#
+# All T-SQL is run via `sqlcmd` over win_shell rather than a community SQL
+# module - there is no well-maintained Ansible module for running arbitrary
+# scripts against MSSQL, and sqlcmd is guaranteed present with the engine.
+
+- name: Ensure Chocolatey is installed
+  ansible.windows.win_chocolatey:
+    name: chocolatey
+    state: present
+
+- name: Install SQL Server Express
+  ansible.windows.win_chocolatey:
+    name: sql-server-express
+    state: present
+
+- name: Install SQL Server Management Studio (for lab admin convenience, not required by attackers)
+  ansible.windows.win_chocolatey:
+    name: sql-server-management-studio
+    state: present
+  ignore_errors: true
+
+- name: Enable SQL Server + Windows mixed-mode authentication and set the sa password
+  ansible.windows.win_shell: |
+    Import-Module 'SqlServer' -ErrorAction SilentlyContinue
+    $srv = New-Object Microsoft.SqlServer.Management.Smo.Server('localhost\SQLEXPRESS')
+    $srv.Settings.LoginMode = [Microsoft.SqlServer.Management.Smo.ServerLoginMode]::Mixed
+    $srv.Alter()
+    Restart-Service -Name 'MSSQL$SQLEXPRESS' -Force
+    Start-Sleep -Seconds 5
+    sqlcmd -S localhost\SQLEXPRESS -Q "ALTER LOGIN sa WITH PASSWORD = '{{ halcyon_sa_mssql_password }}'; ALTER LOGIN sa ENABLE;"
+  changed_when: true
+
+- name: Create domain service account context for MSSQL engine (svc-mssql runs the service)
+  ansible.windows.win_shell: |
+    $cred = New-Object System.Management.Automation.PSCredential("{{ domain_netbios }}\svc-mssql", (ConvertTo-SecureString "{{ halcyon_creds['svc-mssql'] }}" -AsPlainText -Force))
+    Set-Service -Name 'MSSQL$SQLEXPRESS' -Credential $cred -ErrorAction SilentlyContinue
+    Restart-Service -Name 'MSSQL$SQLEXPRESS' -Force -ErrorAction SilentlyContinue
+  changed_when: true
+
+- name: Grant svc-mssql SeImpersonatePrivilege (already default for LocalSystem-adjacent service accounts, explicit here for the potato-style privesc path)
+  ansible.windows.win_shell: |
+    ntrights +r SeImpersonatePrivilege -u "{{ domain_netbios }}\svc-mssql"
+  changed_when: true
+  ignore_errors: true
+
+- name: Enable xp_cmdshell (always-live path)
+  ansible.windows.win_shell: |
+    sqlcmd -S localhost\SQLEXPRESS -U sa -P "{{ halcyon_sa_mssql_password }}" -Q "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;"
+  when: "'mssql_xp_cmdshell' in halcyon_live_paths"
+  changed_when: true
+
+- name: Configure a linked server back to DC01 using svc-mssql's context (EXECUTE AS abuse path)
+  ansible.windows.win_shell: |
+    sqlcmd -S localhost\SQLEXPRESS -U sa -P "{{ halcyon_sa_mssql_password }}" -Q "EXEC sp_addlinkedserver @server = N'DC01LINK', @srvproduct=N'', @provider=N'SQLNCLI', @datasrc=N'dc01.{{ domain_name }}'; EXEC sp_addlinkedsrvlogin @rmtsrvname=N'DC01LINK', @useself=N'True';"
+  when: "'mssql_linked_server' in halcyon_live_paths"
+  changed_when: true
+
+- name: Create the CI deploy share referenced by WEB01's deploy.sh
+  ansible.windows.win_shell: |
+    New-Item -ItemType Directory -Path 'C:\Shares\Deploy' -Force | Out-Null
+    New-SmbShare -Name "deploy" -Path 'C:\Shares\Deploy' -FullAccess "{{ domain_netbios }}\svc-deploy","{{ domain_netbios }}\Domain Admins" -ErrorAction SilentlyContinue
+  changed_when: true
+
+- name: Drop the first-domain-cred flag + a decoy release note in the deploy share
+  ansible.windows.win_shell: |
+    Set-Content -Path 'C:\Shares\Deploy\flag_first_domain_cred.txt' -Value "{{ halcyon_flags.first_domain_cred }}"
+    Set-Content -Path 'C:\Shares\Deploy\README.txt' -Value "intranet-latest.tar.gz is built by CI - if missing, trigger a manual deploy run."
+  changed_when: true

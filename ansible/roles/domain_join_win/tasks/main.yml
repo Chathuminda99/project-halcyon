@@ -1,0 +1,59 @@
+---
+- name: Join to {{ domain_name }}
+  microsoft.ad.membership:
+    dns_domain_name: "{{ domain_name }}"
+    domain_admin_user: "administrator@{{ domain_name }}"
+    domain_admin_password: "{{ halcyon_da_breakglass_password }}"
+    domain_ou_path: "OU=Workstations,OU=Halcyon,{{ domain_dn }}"
+    state: domain
+    reboot: true
+  register: join_result
+
+- name: Wait for reboot after domain join
+  ansible.builtin.wait_for_connection:
+    delay: 30
+    timeout: 600
+  when: join_result.reboot_required | default(false)
+
+# Local admin password: shared across WS01/WS02 only when the laps_absent_pth
+# path is live this deploy (that's the whole point of the vulnerability).
+- name: Set local Administrator password (shared, no LAPS)
+  ansible.windows.win_user:
+    name: Administrator
+    password: "{{ halcyon_local_admin_password }}"
+    state: present
+  when: "'laps_absent_pth' in halcyon_live_paths"
+
+- name: Set local Administrator password (unique per host, LAPS-like)
+  ansible.windows.win_user:
+    name: Administrator
+    password: "{{ halcyon_creds[inventory_hostname] | default(halcyon_local_admin_password + inventory_hostname) }}"
+    state: present
+  when: "'laps_absent_pth' not in halcyon_live_paths"
+
+- name: Seed the assigned staff user's local session (simulated interactive logon)
+  ansible.windows.win_shell: |
+    $cred = New-Object System.Management.Automation.PSCredential("{{ domain_netbios }}\{{ item.sam }}", (ConvertTo-SecureString "{{ halcyon_creds[item.sam] }}" -AsPlainText -Force))
+    # touch profile creation via a scheduled task run-once, avoids interactive winrm session limits
+    schtasks /Create /TN "HalcyonSeed" /TR "cmd.exe /c whoami > C:\Windows\Temp\seed.txt" /SC ONCE /ST 00:00 /RU "{{ domain_netbios }}\{{ item.sam }}" /RP "{{ halcyon_creds[item.sam] }}" /F
+    schtasks /Run /TN "HalcyonSeed"
+    Start-Sleep -Seconds 5
+    schtasks /Delete /TN "HalcyonSeed" /F
+  loop: "{{ staff_users | selectattr('workstation', 'equalto', inventory_hostname) | list }}"
+  changed_when: true
+
+- name: Cache Rina Tan's session as a privileged one (Finance + local admin) for WS02 lateral path
+  ansible.windows.win_user:
+    name: r.tan
+    groups:
+      - Administrators
+    groups_action: add
+  when:
+    - inventory_hostname == 'ws02'
+    - "'laps_absent_pth' in halcyon_live_paths or 'acl_chain_dcsync' in halcyon_live_paths"
+
+- name: Drop the privilege-escalation flag (readable once local admin on WS02 is achieved)
+  ansible.windows.win_copy:
+    content: "{{ halcyon_flags.privilege_escalation }}"
+    dest: 'C:\Windows\System32\config\flag_privilege_escalation.txt'
+  when: inventory_hostname == 'ws02'

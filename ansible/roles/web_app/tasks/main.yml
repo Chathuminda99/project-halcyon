@@ -1,0 +1,145 @@
+---
+- name: Install Postgres
+  ansible.builtin.apt:
+    name: [postgresql, postgresql-contrib, python3-psycopg2]
+    state: present
+
+- name: Ensure postgres is running
+  ansible.builtin.systemd:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Create halcyon DB role
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: halcyon
+    password: "{{ halcyon_creds['webapp-db'] | default('halcyon-db-' + halcyon_deploy_seed[:8]) }}"
+    role_attr_flags: CREATEDB
+
+- name: Create halcyon database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: halcyon
+    owner: halcyon
+
+- name: Render schema + seed data to a temp file
+  ansible.builtin.template:
+    src: schema.sql.j2
+    dest: /tmp/halcyon_schema.sql
+    mode: "0600"
+
+- name: Load schema + seed data
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: halcyon
+    path_to_script: /tmp/halcyon_schema.sql
+
+- name: Remove the rendered schema temp file
+  ansible.builtin.file:
+    path: /tmp/halcyon_schema.sql
+    state: absent
+
+- name: Create app directory
+  ansible.builtin.file:
+    path: /var/www/intranet
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0755"
+
+- name: Deploy app code (app.py, templates, static)
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /var/www/intranet/
+    owner: www-data
+    group: www-data
+  loop:
+    - "{{ playbook_dir }}/../webapp/app.py"
+    - "{{ playbook_dir }}/../webapp/requirements.txt"
+    - "{{ playbook_dir }}/../webapp/templates"
+    - "{{ playbook_dir }}/../webapp/static"
+
+- name: Create Python venv
+  ansible.builtin.command: python3 -m venv /var/www/intranet/venv
+  args:
+    creates: /var/www/intranet/venv/bin/activate
+
+- name: Install app requirements into venv
+  ansible.builtin.pip:
+    requirements: /var/www/intranet/requirements.txt
+    virtualenv: /var/www/intranet/venv
+
+- name: Deploy systemd unit for the app (gunicorn)
+  ansible.builtin.template:
+    src: halcyon-webapp.service.j2
+    dest: /etc/systemd/system/halcyon-webapp.service
+  notify: restart webapp
+
+- name: Deploy nginx reverse proxy vhost
+  ansible.builtin.template:
+    src: nginx-intranet.conf.j2
+    dest: /etc/nginx/sites-available/intranet
+  notify: reload nginx
+
+- name: Enable nginx vhost
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/intranet
+    dest: /etc/nginx/sites-enabled/intranet
+    state: link
+  notify: reload nginx
+
+- name: Disable default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+
+- name: Enable + start webapp service
+  ansible.builtin.systemd:
+    name: halcyon-webapp
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# --- Source disclosure path: .git or backup.zip left in web root ---
+- name: "Path: exposed .git directory with hardcoded LDAP bind creds in history"
+  block:
+    - name: Init a throwaway git repo in the web root with the vulnerable config committed
+      ansible.builtin.shell: |
+        cd /var/www/intranet
+        git init -q
+        git config user.email "ci@halcyon.local"
+        git config user.name "Halcyon CI"
+        cat > config.py.bak <<'EOF'
+        LDAP_BIND_DN = "CN=Web Bind Service,OU=Service Accounts,OU=Halcyon,{{ domain_dn }}"
+        LDAP_BIND_PW = "{{ halcyon_creds['svc-webbind'] }}"
+        EOF
+        git add config.py.bak
+        git commit -q -m "wip: ldap bind config (remove before deploy)"
+        rm -f config.py.bak
+        git add -A
+        git commit -q -m "cleanup" --allow-empty
+      args:
+        creates: /var/www/intranet/.git/HEAD
+      changed_when: true
+  when: "'web_git_backup_disclosure' in halcyon_live_paths"
+
+- name: Drop the web-foothold flag (reachable once RCE as www-data is achieved)
+  ansible.builtin.copy:
+    dest: /opt/halcyon/flag_web_foothold.txt
+    content: "{{ halcyon_flags.web_foothold }}\n"
+    owner: www-data
+    group: www-data
+    mode: "0640"
+
+- name: Set env vars for live vuln paths
+  ansible.builtin.lineinfile:
+    path: /etc/default/halcyon-webapp
+    create: true
+    line: "HALCYON_LIVE_PATHS=\"{{ halcyon_live_paths | join(' ') }}\""
+    mode: "0644"
+  notify: restart webapp

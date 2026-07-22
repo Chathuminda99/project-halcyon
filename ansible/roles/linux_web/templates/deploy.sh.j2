@@ -1,0 +1,18 @@
+#!/bin/bash
+# Halcyon intranet - CI deploy hook (legacy, run manually until Jenkins migration lands)
+# Contact: k.ahmadi (IT-Infra) if this breaks.
+
+set -e
+
+DEPLOY_USER="svc-deploy"
+DEPLOY_PASS="{{ halcyon_creds['svc-deploy'] }}"
+SHARE="//srv01.{{ domain_name }}/deploy"
+
+if [ "$1" == "--check" ]; then
+    echo "deploy.sh ok - target: $SHARE"
+    exit 0
+fi
+
+smbclient "$SHARE" -U "{{ domain_netbios }}\\${DEPLOY_USER}%${DEPLOY_PASS}" -c "get intranet-latest.tar.gz /tmp/intranet-latest.tar.gz"
+tar -xzf /tmp/intranet-latest.tar.gz -C /var/www/intranet
+systemctl restart halcyon-webapp

@@ -1,0 +1,50 @@
+---
+# Realism/difficulty knobs — applies to all Windows hosts. Defender AV stays
+# ON everywhere (this is not an AV-off lab); only the *firewall* is disabled,
+# per the "flat network, no firewall" requirement. SMB/LDAP signing and
+# LLMNR/NBT-NS are set per-host to create the intended relay surface.
+
+- name: Ensure Windows Defender real-time protection is ON
+  ansible.windows.win_shell: |
+    Set-MpPreference -DisableRealtimeMonitoring $false
+    Set-MpPreference -DisableIOAVProtection $false
+    Set-MpPreference -DisableScriptScanning $false
+  when: posture.defender_av_enabled
+  changed_when: true
+
+- name: Disable Windows Defender Firewall on all profiles (no-firewall lab requirement)
+  community.windows.win_firewall:
+    state: disabled
+    profiles: [Domain, Private, Public]
+  when: not posture.defender_firewall_enabled
+
+- name: Configure SMB signing on the DC (kept required - stays hardened)
+  ansible.windows.win_shell: |
+    Set-SmbServerConfiguration -RequireSecuritySignature $true -Force
+  when:
+    - inventory_hostname in groups['domain_controllers']
+    - posture.smb_signing_required_dc
+  changed_when: true
+
+- name: Configure SMB signing on SRV01 (deliberately not required - relay target)
+  ansible.windows.win_shell: |
+    Set-SmbServerConfiguration -RequireSecuritySignature $false -Force
+  when:
+    - inventory_hostname == 'srv01'
+    - not posture.smb_signing_required_srv01
+  changed_when: true
+
+- name: Configure LDAP channel binding / signing enforcement on the DC
+  ansible.windows.win_shell: |
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters" `
+      -Name "LdapEnforceChannelBinding" -Value {{ 2 if posture.ldap_channel_binding_enforced else 0 }} `
+      -PropertyType DWORD -Force
+  when: inventory_hostname in groups['domain_controllers']
+  changed_when: true
+
+- name: Enable/disable LLMNR via GPO-equivalent registry key
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient
+    name: EnableMulticast
+    data: "{{ 1 if posture.llmnr_nbtns_enabled else 0 }}"
+    type: dword

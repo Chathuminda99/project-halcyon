@@ -1,0 +1,16 @@
+[Unit]
+Description=Halcyon Logistics intranet (gunicorn)
+After=network.target postgresql.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/intranet
+EnvironmentFile=-/etc/default/halcyon-webapp
+Environment=HALCYON_DB_DSN=dbname=halcyon user=halcyon password={{ halcyon_creds['webapp-db'] | default('halcyon-db-' + halcyon_deploy_seed[:8]) }} host=localhost
+Environment=HALCYON_FLASK_SECRET={{ halcyon_creds['webapp-flask-secret'] | default(halcyon_deploy_seed) }}
+ExecStart=/var/www/intranet/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8080 app:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

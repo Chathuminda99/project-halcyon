@@ -1,0 +1,46 @@
+---
+# Project Halcyon — top-level playbook.
+# Vagrant invokes this per-host via --limit, but the full run (all hosts) is
+# also valid standalone: `ansible-playbook -i ansible/inventory.yml ansible/site.yml`
+
+- name: Guard - secrets seed must exist
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - group_vars/secrets_seed.yml
+  roles:
+    - randomize
+
+- name: Domain controller - forest, DNS, AD CS
+  hosts: domain_controllers
+  vars_files:
+    - group_vars/secrets_seed.yml
+  roles:
+    - ad_forest
+    - adcs
+    - ad_identities
+    - posture
+
+- name: Member server - MSSQL
+  hosts: member_servers
+  vars_files:
+    - group_vars/secrets_seed.yml
+  roles:
+    - mssql
+    - posture
+
+- name: Windows clients
+  hosts: clients
+  vars_files:
+    - group_vars/secrets_seed.yml
+  roles:
+    - domain_join_win
+    - posture
+
+- name: Linux web server
+  hosts: linux
+  vars_files:
+    - group_vars/secrets_seed.yml
+  roles:
+    - linux_web
+    - web_app

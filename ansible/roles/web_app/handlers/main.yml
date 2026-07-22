@@ -1,0 +1,11 @@
+---
+- name: restart webapp
+  ansible.builtin.systemd:
+    name: halcyon-webapp
+    state: restarted
+    daemon_reload: true
+
+- name: reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded

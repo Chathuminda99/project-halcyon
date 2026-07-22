@@ -1,0 +1,204 @@
+---
+# WEB01: domain-join via SSSD/realmd, then seed the Linux-side loot and
+# privesc paths that make this the "Linux -> AD pivot" stage of the lab.
+
+- name: Install AD integration + web stack packages
+  ansible.builtin.apt:
+    name:
+      - realmd
+      - sssd
+      - sssd-tools
+      - libnss-sss
+      - libpam-sss
+      - adcli
+      - samba-common-bin
+      - krb5-user
+      - packagekit
+      - python3-pip
+      - python3-venv
+      - nginx
+    state: present
+    update_cache: true
+
+- name: Write krb5.conf
+  ansible.builtin.template:
+    src: krb5.conf.j2
+    dest: /etc/krb5.conf
+    mode: "0644"
+
+- name: Join the domain via realm (using svc-webbind as the join account)
+  ansible.builtin.expect:
+    command: "realm join -U svc-webbind {{ domain_name }}"
+    responses:
+      Password for svc-webbind@{{ domain_name.upper() }}: "{{ halcyon_creds['svc-webbind'] }}"
+  register: realm_join
+  changed_when: "'already' not in realm_join.stdout | default('')"
+  failed_when: false
+
+- name: Configure sssd.conf with LDAP bind creds (this is the real loot for Stage 2)
+  ansible.builtin.template:
+    src: sssd.conf.j2
+    dest: /etc/sssd/sssd.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart sssd
+
+- name: Allow password auth + all domain users to log in (realistic small-shop laziness)
+  ansible.builtin.lineinfile:
+    path: /etc/sssd/sssd.conf
+    regexp: '^access_provider'
+    line: 'access_provider = permit'
+
+- name: Ensure home directories auto-create on login
+  community.general.pamd:
+    name: common-session
+    type: session
+    control: optional
+    module_path: pam_mkhomedir.so
+    new_type: session
+    new_control: optional
+    new_module_path: pam_mkhomedir.so
+    state: before
+
+# --- Loot #2: machine keytab is world-unreadable by default; leave it 644 (misconfig) ---
+- name: Weaken keytab permissions (realistic ops mistake, not a CVE)
+  ansible.builtin.file:
+    path: /etc/krb5.keytab
+    mode: "0644"
+  ignore_errors: true
+
+# --- Loot #3: deploy script with svc-deploy plaintext creds ---
+- name: Create /opt/halcyon
+  ansible.builtin.file:
+    path: /opt/halcyon
+    state: directory
+    owner: root
+    group: www-data
+    mode: "0755"
+
+- name: Drop CI-style deploy script with hardcoded svc-deploy credential
+  ansible.builtin.template:
+    src: deploy.sh.j2
+    dest: /opt/halcyon/deploy.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create www-data bash history breadcrumb pointing at the deploy script
+  ansible.builtin.copy:
+    dest: /var/www/.bash_history
+    owner: www-data
+    group: www-data
+    mode: "0640"
+    content: |
+      cd /opt/halcyon
+      ./deploy.sh --check
+      cat deploy.sh
+      exit
+
+# --- Linux privesc paths (selected subset per deploy) ---
+- name: "Privesc path: sudo NOPASSWD on a writable maintenance script"
+  block:
+    - name: Create writable-by-www-data maintenance script
+      ansible.builtin.copy:
+        dest: /opt/halcyon/maint.sh
+        owner: root
+        group: www-data
+        mode: "0775"
+        content: |
+          #!/bin/bash
+          # placeholder maintenance task, extend as needed
+          systemctl status nginx
+    - name: Grant www-data NOPASSWD sudo on the script
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers.d/halcyon-maint
+        create: true
+        mode: "0440"
+        line: "www-data ALL=(root) NOPASSWD: /opt/halcyon/maint.sh"
+        validate: "visudo -cf %s"
+  when: "'linux_sudo_nopasswd' in halcyon_live_paths"
+
+- name: "Privesc path: world-writable systemd unit run as root"
+  block:
+    - name: Create a root-run systemd service with a world-writable ExecStart target
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/halcyon-metrics.service
+        content: |
+          [Unit]
+          Description=Halcyon metrics exporter
+          [Service]
+          ExecStart=/opt/halcyon/metrics.sh
+          Restart=always
+          User=root
+          [Install]
+          WantedBy=multi-user.target
+        mode: "0644"
+    - name: Create the world-writable target script
+      ansible.builtin.copy:
+        dest: /opt/halcyon/metrics.sh
+        content: |
+          #!/bin/bash
+          sleep 3600
+        mode: "0666"
+    - name: Enable and start the service
+      ansible.builtin.systemd:
+        name: halcyon-metrics
+        enabled: true
+        state: started
+        daemon_reload: true
+  when: "'linux_writable_systemd' in halcyon_live_paths"
+
+- name: "Privesc path: SUID binary that reads arbitrary files"
+  block:
+    - name: Compile a small SUID-root file-reader (log viewer with no path restriction)
+      ansible.builtin.copy:
+        dest: /opt/halcyon/logview.c
+        content: |
+          #include <stdio.h>
+          #include <stdlib.h>
+          int main(int argc, char **argv) {
+              if (argc != 2) { printf("usage: %s <logfile>\n", argv[0]); return 1; }
+              setuid(0); setgid(0);
+              char cmd[512];
+              snprintf(cmd, sizeof(cmd), "/bin/cat /var/log/halcyon/%s", argv[1]);
+              system(cmd);
+              return 0;
+          }
+        mode: "0644"
+    - name: Build it
+      ansible.builtin.command: gcc -o /usr/local/bin/logview /opt/halcyon/logview.c
+      changed_when: true
+    - name: Make it SUID root
+      ansible.builtin.file:
+        path: /usr/local/bin/logview
+        owner: root
+        group: root
+        mode: "4755"
+  when: "'linux_suid_binary' in halcyon_live_paths"
+
+# --- TLS misconfig: world-readable private key, mismatched SAN ---
+- name: Generate self-signed cert with wrong SAN (config mistake, not a CVE)
+  ansible.builtin.command: >
+    openssl req -x509 -newkey rsa:2048 -nodes
+    -keyout /etc/ssl/private/intranet.key
+    -out /etc/ssl/certs/intranet.crt
+    -days 365
+    -subj "/CN=web01.internal.old-domain.local"
+  args:
+    creates: /etc/ssl/certs/intranet.crt
+
+- name: Leave the TLS private key world-readable (the actual misconfiguration)
+  ansible.builtin.file:
+    path: /etc/ssl/private/intranet.key
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Drop the linux-root flag (reachable after local privesc to root)
+  ansible.builtin.copy:
+    dest: /root/flag_linux_root.txt
+    content: "{{ halcyon_flags.linux_root }}\n"
+    owner: root
+    group: root
+    mode: "0600"

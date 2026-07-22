@@ -1,0 +1,22 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  identity:
+    hostname: web01-base
+    username: vagrant
+    # password: "vagrant" (hashed with: mkpasswd -m sha-512)
+    password: "$6$rounds=4096$saltsalt$Ge6xLxK.aVQXKZP0hn3YV9r3Ye0f5VQXGz2XKZLp0z3pQ2X5T1cVQvW1nQmYt0v0y7rIYcTvR5v.mZ0G8FQxV/"
+  ssh:
+    install-server: true
+    allow-pw: true
+  storage:
+    layout:
+      name: direct
+  packages:
+    - open-vm-tools
+    - openssh-server
+  late-commands:
+    - echo 'vagrant ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/vagrant

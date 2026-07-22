@@ -1,0 +1,29 @@
+# Vagrant / VM state
+.vagrant/
+*.log
+
+# Packer
+packer/**/output-*/
+packer/**/*.vmx
+packer/**/packer_cache/
+*.box
+
+# Ansible
+*.retry
+ansible/.vault_pass
+ansible/group_vars/secrets_seed.yml
+
+# Generated per-deploy artifacts (contain live secrets — never commit)
+docs/answer-key.md
+ansible/generated/
+
+# ISOs (too large, and licensed media)
+*.iso
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Python
+__pycache__/
+*.pyc

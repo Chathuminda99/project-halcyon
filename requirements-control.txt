@@ -1,0 +1,5 @@
+# Python packages needed on the Ansible CONTROL node (not the lab VMs).
+ansible-core>=2.16
+pywinrm[credssp]>=0.4.3
+requests-ntlm>=1.2.0
+PyYAML>=6.0

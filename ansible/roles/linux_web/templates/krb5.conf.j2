@@ -1,0 +1,15 @@
+[libdefaults]
+    default_realm = {{ domain_name.upper() }}
+    dns_lookup_realm = true
+    dns_lookup_kdc = true
+    rdns = false
+
+[realms]
+    {{ domain_name.upper() }} = {
+        kdc = dc01.{{ domain_name }}
+        admin_server = dc01.{{ domain_name }}
+    }
+
+[domain_realm]
+    .{{ domain_name }} = {{ domain_name.upper() }}
+    {{ domain_name }} = {{ domain_name.upper() }}

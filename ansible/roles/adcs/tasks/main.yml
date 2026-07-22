@@ -1,0 +1,68 @@
+---
+# Stand up an Enterprise CA on DC01 and publish 0-3 vulnerable certificate
+# templates depending on which ESC paths are live this deployment. Uses
+# certutil/PSPKI-style PowerShell since there's no mature Ansible module for
+# CA template manipulation.
+
+- name: Install AD CS role (Enterprise CA)
+  ansible.windows.win_feature:
+    name:
+      - ADCS-Cert-Authority
+      - ADCS-Web-Enrollment
+    include_management_tools: true
+    state: present
+  register: adcs_feature
+
+- name: Configure Enterprise Root CA (idempotent check via certutil)
+  ansible.windows.win_shell: |
+    $installed = certutil -cainfo 2>&1 | Select-String "CA type"
+    if (-not $installed) {
+      Install-AdcsCertificationAuthority -CAType EnterpriseRootCA `
+        -CACommonName "Halcyon-Root-CA" `
+        -KeyLength 2048 -HashAlgorithmName SHA256 -Force
+    }
+  changed_when: true
+
+- name: Install web enrollment role (needed for ESC8)
+  ansible.windows.win_shell: |
+    Install-AdcsWebEnrollment -Force
+  when: "'adcs_esc8_relay' in halcyon_live_paths"
+  changed_when: true
+
+- name: Force HTTP-only web enrollment (no HTTPS/EPA) for ESC8
+  ansible.windows.win_shell: |
+    Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography\CertSvc' -Name 'RequireSSLForEnrollment' -Value 0 -ErrorAction SilentlyContinue
+  when: "'adcs_esc8_relay' in halcyon_live_paths"
+  changed_when: true
+
+# --- ESC1: enrollee-supplies-subject + client-auth EKU + Domain Users enroll ---
+# Full template duplication/ACL scripting is done via the PSPKI PowerShell
+# module, invoked from templates/esc1_template.ps1.j2 below.
+- name: Push ESC1 template provisioning script
+  ansible.windows.win_template:
+    src: esc1_template.ps1.j2
+    dest: 'C:\Windows\Temp\esc1_template.ps1'
+  when: "'adcs_esc1' in halcyon_live_paths"
+
+- name: Run ESC1 template provisioning script
+  ansible.windows.win_shell: 'powershell.exe -ExecutionPolicy Bypass -File C:\Windows\Temp\esc1_template.ps1'
+  when: "'adcs_esc1' in halcyon_live_paths"
+  changed_when: true
+
+- name: Push ESC4 template provisioning script (writable template ACL)
+  ansible.windows.win_template:
+    src: esc4_template.ps1.j2
+    dest: 'C:\Windows\Temp\esc4_template.ps1'
+  when: "'adcs_esc4' in halcyon_live_paths"
+
+- name: Run ESC4 template provisioning script
+  ansible.windows.win_shell: 'powershell.exe -ExecutionPolicy Bypass -File C:\Windows\Temp\esc4_template.ps1'
+  when: "'adcs_esc4' in halcyon_live_paths"
+  changed_when: true
+
+- name: Push ESC6 config (EDITF_ATTRIBUTESUBJECTALTNAME2 on the CA)
+  ansible.windows.win_shell: |
+    certutil -setreg policy\EditFlags +EDITF_ATTRIBUTESUBJECTALTNAME2
+    Restart-Service certsvc
+  when: "'adcs_esc6' in halcyon_live_paths"
+  changed_when: true

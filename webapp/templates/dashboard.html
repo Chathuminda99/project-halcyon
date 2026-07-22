@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Welcome, {{ username }}</h1>
+<p>Use <a href="/search">shipment search</a> to look up manifests, or open a shipment
+directly by its ID (e.g. <code>/shipment/101</code>) from a tracking link shared by dispatch.</p>
+{% endblock %}

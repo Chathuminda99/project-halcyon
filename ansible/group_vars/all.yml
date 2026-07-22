@@ -1,0 +1,118 @@
+---
+# Project Halcyon — global config, identity fabric, and randomization pools.
+#
+# Every secret below is a PLACEHOLDER TEMPLATE, not a literal value. The `randomize`
+# role resolves them at provision time from `halcyon_deploy_seed` (see scripts/deploy.sh).
+# Nothing here should ever be treated as the actual deployed credential.
+
+domain_name: corp.halcyon.local
+domain_netbios: HALCYON
+domain_dn: "DC=corp,DC=halcyon,DC=local"
+org_name: "Halcyon Logistics"
+web_vhost: intranet.halcyon.local
+
+# ---------------------------------------------------------------------------
+# Identity fabric — original names, no GOAD/GoT terms anywhere.
+# ---------------------------------------------------------------------------
+ou_layout:
+  - "OU=Halcyon,{{ domain_dn }}"
+  - "OU=Service Accounts,OU=Halcyon,{{ domain_dn }}"
+  - "OU=Staff,OU=Halcyon,{{ domain_dn }}"
+  - "OU=Workstations,OU=Halcyon,{{ domain_dn }}"
+  - "OU=Servers,OU=Halcyon,{{ domain_dn }}"
+
+groups:
+  - name: IT-Support
+    desc: "Tier-1 helpdesk staff"
+  - name: IT-Infra
+    desc: "Infrastructure / server team"
+  - name: Finance
+    desc: "Finance department"
+  - name: Dispatch
+    desc: "Logistics dispatch staff"
+  - name: Domain Admins
+    builtin: true
+
+# Standard/staff users (password-sprayed pool, seeded per-deploy)
+staff_users:
+  - { sam: j.oduya,   cn: "Jomo Oduya",    group: Dispatch,    workstation: ws01 }
+  - { sam: r.tan,      cn: "Rina Tan",      group: Finance,     workstation: ws02, privileged_session: true }
+  - { sam: m.silva,    cn: "Mateus Silva",  group: IT-Support,  workstation: ws01 }
+  - { sam: k.ahmadi,   cn: "Kian Ahmadi",   group: IT-Infra,    workstation: ws02 }
+
+# Service accounts — the primary skill-testing surface.
+# `asrep_roastable` / `kerberoastable` / `dcsync_via_acl` flags are consumed by
+# ad_identities role; `live_pool` marks which are candidates for per-deploy activation.
+service_accounts:
+  - sam: svc-webbind
+    cn: "Web Bind Service"
+    purpose: "LDAP bind account used by WEB01 SSSD"
+    kerberoastable: true
+    live_pool: primary
+  - sam: svc-mssql
+    cn: "MSSQL Service"
+    purpose: "MSSQL engine service account, SPN registered"
+    kerberoastable: true
+    live_pool: primary
+  - sam: svc-backup
+    cn: "Backup Operator Service"
+    purpose: "Nightly backup job; holds DCSync via ACL grant, not group membership"
+    dcsync_via_acl: true
+    live_pool: primary
+  - sam: svc-deploy
+    cn: "Web Deploy Service"
+    purpose: "CI deploy account, creds left in a WEB01 deploy script"
+    asrep_roastable: true
+    live_pool: secondary
+  - sam: svc-scan
+    cn: "Vuln Scanner Service"
+    purpose: "decoy — looks privileged, is not"
+    decoy: true
+    live_pool: decoy
+
+# ---------------------------------------------------------------------------
+# Vulnerability path catalogue. `randomize` selects a subset per deploy so no
+# single published walkthrough solves every deployment identically. Paths
+# marked `always: true` are structural (needed for the lab to hang together)
+# and are never disabled.
+# ---------------------------------------------------------------------------
+vuln_paths:
+  web_idor_ssrf_upload:      { always: true,  category: web }
+  web_sqli_creds_leak:       { always: false, category: web }
+  web_git_backup_disclosure: { always: false, category: web }
+  linux_sudo_nopasswd:       { always: false, category: linux_privesc }
+  linux_writable_systemd:    { always: false, category: linux_privesc }
+  linux_suid_binary:         { always: false, category: linux_privesc }
+  kerberoast_svc_mssql:      { always: true,  category: kerberos }
+  asrep_svc_deploy:          { always: false, category: kerberos }
+  acl_chain_dcsync:          { always: true,  category: acl }
+  adcs_esc1:                 { always: false, category: adcs }
+  adcs_esc4:                 { always: false, category: adcs }
+  adcs_esc6:                 { always: false, category: adcs }
+  adcs_esc8_relay:           { always: false, category: adcs }
+  unconstrained_delegation:  { always: false, category: delegation }
+  rbcd_web_to_ws01:          { always: false, category: delegation }
+  laps_absent_pth:           { always: false, category: lateral }
+  mssql_xp_cmdshell:         { always: true,  category: mssql }
+  mssql_linked_server:       { always: false, category: mssql }
+
+# Minimum number of non-`always` ADCS paths and non-`always` general paths to
+# activate per deploy, enforced by roles/randomize/tasks/select_paths.yml.
+randomize_min_adcs_live: 2
+randomize_min_optional_live: 6
+
+# ---------------------------------------------------------------------------
+# Posture — realism knobs. Defender AV is always on; only the *firewall* is off
+# per the lab's "flat network, no firewall" design.
+# ---------------------------------------------------------------------------
+posture:
+  defender_av_enabled: true
+  defender_firewall_enabled: false
+  smb_signing_required_dc: true      # DC stays hardened
+  smb_signing_required_srv01: false  # deliberate weak point (relay target)
+  ldap_channel_binding_enforced: false
+  llmnr_nbtns_enabled: true
+  laps_deployed_hosts: []            # left empty -> no LAPS anywhere by default
+
+# secrets_seed.yml (gitignored) is generated by scripts/deploy.sh and merged in;
+# it contains the resolved per-deploy passwords, flag tokens, and live path list.

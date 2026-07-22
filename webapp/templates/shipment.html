@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Shipment {{ shipment.reference }}</h1>
+<table class="detail">
+  <tr><th>Status</th><td>{{ shipment.status }}</td></tr>
+  <tr><th>Destination</th><td>{{ shipment.destination }}</td></tr>
+  <tr><th>Ops team</th><td>{{ shipment.ops_team }}</td></tr>
+  <tr><th>Internal notes</th><td>{{ shipment.internal_notes }}</td></tr>
+</table>
+
+<h2>Proof of delivery</h2>
+<form action="/shipment/{{ shipment.id }}/upload-pod" method="post" enctype="multipart/form-data">
+  <input type="file" name="photo" accept=".jpg,.jpeg,.png">
+  <button type="submit">Upload</button>
+</form>
+
+<h2>Import manifest (Ops-Admin)</h2>
+<form action="/shipment/{{ shipment.id }}/import-manifest" method="post">
+  <input type="hidden" name="client_is_admin" value="true">
+  <input type="text" name="manifest_url" placeholder="https://carrier-partner.example/manifest.xml" size="50">
+  <button type="submit">Import</button>
+</form>
+{% endblock %}

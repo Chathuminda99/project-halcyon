@@ -1,0 +1,126 @@
+---
+# Populate staff + service account identities, then layer in the specific
+# Kerberos/ACL misconfigurations that are "live" for this deployment
+# (halcyon_live_paths, resolved by randomize/gen_seed.py before this runs).
+
+- name: Create staff users
+  microsoft.ad.user:
+    name: "{{ item.sam }}"
+    firstname: "{{ item.cn.split(' ')[0] }}"
+    surname: "{{ item.cn.split(' ')[1] }}"
+    upn: "{{ item.sam }}@{{ domain_name }}"
+    password: "{{ halcyon_creds[item.sam] }}"
+    password_never_expires: true
+    groups:
+      add: ["{{ item.group }}"]
+    path: "OU=Staff,OU=Halcyon,{{ domain_dn }}"
+    state: present
+    enabled: true
+  loop: "{{ staff_users }}"
+
+- name: Create service accounts
+  microsoft.ad.user:
+    name: "{{ item.sam }}"
+    upn: "{{ item.sam }}@{{ domain_name }}"
+    password: "{{ halcyon_creds[item.sam] }}"
+    password_never_expires: true
+    description: "{{ item.purpose }}"
+    path: "OU=Service Accounts,OU=Halcyon,{{ domain_dn }}"
+    state: present
+    enabled: true
+  loop: "{{ service_accounts }}"
+
+# --- Kerberoasting: register an SPN on svc-mssql (always-live path) ---
+- name: Register MSSQL SPNs on svc-mssql (kerberoastable)
+  ansible.windows.win_shell: |
+    setspn -A MSSQLSvc/srv01.{{ domain_name }}:1433 {{ domain_netbios }}\svc-mssql
+    setspn -A MSSQLSvc/srv01.{{ domain_name }} {{ domain_netbios }}\svc-mssql
+  when: "'kerberoast_svc_mssql' in halcyon_live_paths"
+  changed_when: true
+
+- name: Register SPN on svc-webbind (secondary kerberoast target)
+  ansible.windows.win_shell: |
+    setspn -A HTTP/intranet.{{ domain_name }} {{ domain_netbios }}\svc-webbind
+  when: "'kerberoast_svc_mssql' in halcyon_live_paths"  # webbind SPN rides along with the same category toggle
+  changed_when: true
+
+# --- AS-REP roasting: disable Kerberos preauth on svc-deploy ---
+- name: Flag svc-deploy as AS-REP roastable (Do not require Kerberos preauthentication)
+  ansible.windows.win_shell: |
+    Set-ADAccountControl -Identity svc-deploy -DoesNotRequirePreAuth $true
+  when: "'asrep_svc_deploy' in halcyon_live_paths"
+  changed_when: true
+
+# --- ACL chain -> DCSync: IT-Support gets WriteDACL/GenericAll over svc-backup,
+#     and svc-backup is separately granted DS-Replication-Get-Changes[-All]. ---
+- name: Grant IT-Support GenericAll over svc-backup (ACL escalation hop)
+  ansible.windows.win_shell: |
+    $acl = Get-Acl "AD:\$(Get-ADUser svc-backup | Select-Object -ExpandProperty DistinguishedName)"
+    $sid = (Get-ADGroup 'IT-Support').SID
+    $identity = [System.Security.Principal.IdentityReference] $sid
+    $adRights = [System.DirectoryServices.ActiveDirectoryRights] "GenericAll"
+    $type = [System.Security.AccessControl.AccessControlType] "Allow"
+    $inheritanceType = [System.DirectoryServices.ActiveDirectorySecurityInheritance] "None"
+    $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($identity,$adRights,$type,$inheritanceType)
+    $acl.AddAccessRule($ace)
+    Set-Acl -Path "AD:\$(Get-ADUser svc-backup | Select-Object -ExpandProperty DistinguishedName)" -AclObject $acl
+  when: "'acl_chain_dcsync' in halcyon_live_paths"
+  changed_when: true
+
+- name: Grant svc-backup DS-Replication-Get-Changes / -All (DCSync rights, non-DA)
+  ansible.windows.win_shell: |
+    $rootDSE = Get-ADRootDSE
+    $sid = (Get-ADUser svc-backup).SID
+    $identity = [System.Security.Principal.IdentityReference] $sid
+    $type = [System.Security.AccessControl.AccessControlType] "Allow"
+    $getChanges     = [GUID] "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+    $getChangesAll  = [GUID] "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+    $acl = Get-Acl "AD:\$($rootDSE.rootDomainNamingContext)"
+    foreach ($guid in @($getChanges, $getChangesAll)) {
+      $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($identity,"ExtendedRight",$type,$guid)
+      $acl.AddAccessRule($ace)
+    }
+    Set-Acl -Path "AD:\$($rootDSE.rootDomainNamingContext)" -AclObject $acl
+  when: "'acl_chain_dcsync' in halcyon_live_paths"
+  changed_when: true
+
+# --- Unconstrained delegation on SRV01's computer account ---
+- name: Enable unconstrained delegation on SRV01
+  ansible.windows.win_shell: |
+    Get-ADComputer srv01 | Set-ADAccountControl -TrustedForDelegation $true
+  when: "'unconstrained_delegation' in halcyon_live_paths"
+  changed_when: true
+
+# --- RBCD: allow svc-webbind to configure delegation onto WS01's computer object ---
+- name: Grant svc-webbind write access to WS01 msDS-AllowedToActOnBehalfOfOtherIdentity
+  ansible.windows.win_shell: |
+    $target = Get-ADComputer ws01
+    $principal = Get-ADUser svc-webbind
+    $sd = New-Object Security.AccessControl.RawSecurityDescriptor "O:BAD:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;$($principal.SID))"
+    $bytes = New-Object byte[] ($sd.BinaryLength)
+    $sd.GetBinaryForm($bytes, 0)
+    Set-ADComputer -Identity $target -Replace @{ 'msDS-AllowedToActOnBehalfOfOtherIdentity' = $bytes }
+  when: "'rbcd_web_to_ws01' in halcyon_live_paths"
+  changed_when: true
+
+# --- Credential exposure: secrets left in AD object descriptions and a share ---
+- name: Leave a decoy credential hint in svc-scan's description (dead end)
+  microsoft.ad.user:
+    name: svc-scan
+    description: "temp pw Halcyon2019! - CHANGE ME (ticket #4471, unresolved)"
+  when: "'svc-scan' in service_accounts | map(attribute='sam') | list"
+
+- name: Create a GPP-style legacy share with a stale credential file (real, working hop)
+  ansible.windows.win_file:
+    path: 'C:\Shares\ITOps\legacy'
+    state: directory
+
+- name: Drop legacy deploy notes referencing svc-deploy credential pattern
+  ansible.windows.win_copy:
+    content: |
+      Legacy deploy notes (do not use in prod)
+      -----------------------------------------
+      svc-deploy account is used by the old CI box (decommissioned).
+      If Jenkins ever comes back online the bind password follows the
+      same rotation pattern as our other service accounts this quarter.
+    dest: 'C:\Shares\ITOps\legacy\deploy-notes.txt'

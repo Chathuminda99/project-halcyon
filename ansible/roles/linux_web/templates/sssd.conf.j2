@@ -1,0 +1,23 @@
+[sssd]
+domains = {{ domain_name }}
+config_file_version = 2
+services = nss, pam
+
+[domain/{{ domain_name }}]
+ad_domain = {{ domain_name }}
+krb5_realm = {{ domain_name.upper() }}
+realmd_tags = manages-system joined-with-adcli
+cache_credentials = True
+id_provider = ad
+krb5_store_password_if_offline = True
+default_shell = /bin/bash
+ldap_id_mapping = True
+use_fully_qualified_names = False
+fallback_homedir = /home/%u
+access_provider = ad
+
+# Bind account used for lookups when Kerberos SSO isn't available.
+# This is the credential an attacker with local root/www-data access reads.
+ldap_default_bind_dn = CN=Web Bind Service,OU=Service Accounts,OU=Halcyon,{{ domain_dn }}
+ldap_default_authtok_type = password
+ldap_default_authtok = {{ halcyon_creds['svc-webbind'] }}

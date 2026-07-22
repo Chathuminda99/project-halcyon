@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Shipment search</h1>
+<form method="get">
+  <input type="text" name="q" value="{{ q }}" placeholder="reference contains...">
+  <button type="submit">Search</button>
+</form>
+{% if error %}<p class="error">Query error: {{ error }}</p>{% endif %}
+<table>
+  <tr><th>ID</th><th>Reference</th><th>Destination</th><th>Status</th></tr>
+  {% for r in results %}
+  <tr>
+    <td><a href="/shipment/{{ r.id }}">{{ r.id }}</a></td>
+    <td>{{ r.reference }}</td>
+    <td>{{ r.destination }}</td>
+    <td>{{ r.status }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

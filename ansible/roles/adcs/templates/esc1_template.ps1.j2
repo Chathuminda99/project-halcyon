@@ -1,0 +1,26 @@
+# ESC1: certificate template with enrollee-supplies-subject enabled, Client
+# Authentication EKU, no manager approval, and Domain Users granted Enroll.
+# Requires the PSPKI module (installed below if missing).
+
+if (-not (Get-Module -ListAvailable -Name PSPKI)) {
+    Install-PackageProvider -Name NuGet -Force -ErrorAction SilentlyContinue | Out-Null
+    Install-Module -Name PSPKI -Force -Scope AllUsers -ErrorAction SilentlyContinue
+}
+Import-Module PSPKI -ErrorAction SilentlyContinue
+
+$templateName = "HalcyonClientAuth"
+$sourceTemplate = "User"
+
+$existing = Get-CertificateTemplate -Name $templateName -ErrorAction SilentlyContinue
+if (-not $existing) {
+    $src = Get-CertificateTemplate -Name $sourceTemplate
+    $newTpl = $src | Copy-CertificateTemplate -DisplayName $templateName -Name $templateName
+
+    # Enrollee supplies subject (CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT = 0x1)
+    Set-CertificateTemplateAcl -DisplayName $templateName `
+        -User "{{ domain_netbios }}\Domain Users" -AccessType Allow -AccessMask Enroll
+
+    Get-CertificateTemplate -Name $templateName | Enable-CertificateTemplate
+}
+
+Get-CATemplate | Add-CATemplate -Name $templateName -ErrorAction SilentlyContinue | Set-CATemplate

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Halcyon Logistics Intranet{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Halcyon Logistics <span>Intranet</span></div>
+    {% if session.get('username') %}
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/search">Search shipments</a>
+      <span class="user">{{ session['username'] }} ({{ session['ops_team'] }})</span>
+      <a href="/logout">Log out</a>
+    </nav>
+    {% endif %}
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>Internal use only — Halcyon Logistics Operations</footer>
+</body>
+</html>

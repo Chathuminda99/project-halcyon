@@ -1,0 +1,25 @@
+# ESC4: certificate template whose ACL grants low-priv principals WriteOwner/
+# WriteDacl/WriteProperty, allowing them to reconfigure it into an ESC1-style
+# template themselves.
+
+Import-Module PSPKI -ErrorAction SilentlyContinue
+
+$templateName = "HalcyonWorkstationAuth"
+$sourceTemplate = "Machine"
+
+$existing = Get-CertificateTemplate -Name $templateName -ErrorAction SilentlyContinue
+if (-not $existing) {
+    $src = Get-CertificateTemplate -Name $sourceTemplate
+    $null = $src | Copy-CertificateTemplate -DisplayName $templateName -Name $templateName
+
+    # Over-broad ACL: IT-Support can write the template's DACL/properties directly.
+    Set-CertificateTemplateAcl -DisplayName $templateName `
+        -User "{{ domain_netbios }}\IT-Support" -AccessType Allow -AccessMask WriteDacl,WriteProperty,WriteOwner
+
+    Set-CertificateTemplateAcl -DisplayName $templateName `
+        -User "{{ domain_netbios }}\Domain Computers" -AccessType Allow -AccessMask Enroll
+
+    Get-CertificateTemplate -Name $templateName | Enable-CertificateTemplate
+}
+
+Get-CATemplate | Add-CATemplate -Name $templateName -ErrorAction SilentlyContinue | Set-CATemplate

@@ -1,0 +1,44 @@
+all:
+  vars:
+    domain_name: corp.halcyon.local
+    domain_netbios: HALCYON
+    org_name: "Halcyon Logistics"
+
+  children:
+    windows:
+      vars:
+        ansible_connection: winrm
+        ansible_winrm_transport: negotiate
+        ansible_winrm_server_cert_validation: ignore
+        ansible_port: 5985
+      children:
+        domain_controllers:
+          hosts:
+            dc01:
+              ansible_host: 10.20.10.10
+        member_servers:
+          hosts:
+            srv01:
+              ansible_host: 10.20.10.20
+        clients:
+          hosts:
+            ws01:
+              ansible_host: 10.20.10.31
+            ws02:
+              ansible_host: 10.20.10.32
+
+    linux:
+      vars:
+        ansible_connection: ssh
+        ansible_user: vagrant
+      hosts:
+        web01:
+          ansible_host: 10.20.10.40
+
+    attacker:
+      vars:
+        ansible_connection: ssh
+        ansible_user: kali
+      hosts:
+        attack:
+          ansible_host: 10.20.10.66

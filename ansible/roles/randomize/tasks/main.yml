@@ -1,0 +1,22 @@
+---
+# Secrets/live-paths are generated BEFORE any VM provisioning by
+# scripts/deploy.sh -> ansible/roles/randomize/files/gen_seed.py, which writes
+# ansible/group_vars/secrets_seed.yml. This task just fails fast and loudly if
+# a host gets provisioned without that file present, instead of silently
+# falling back to placeholder/default credentials.
+- name: Assert secrets_seed.yml was generated
+  delegate_to: localhost
+  run_once: true
+  stat:
+    path: "{{ playbook_dir }}/group_vars/secrets_seed.yml"
+  register: _seed_file
+
+- name: Fail if secrets_seed.yml is missing
+  delegate_to: localhost
+  run_once: true
+  assert:
+    that: _seed_file.stat.exists
+    fail_msg: >-
+      ansible/group_vars/secrets_seed.yml not found. Run
+      `python3 ansible/roles/randomize/files/gen_seed.py` (or scripts/deploy.sh,
+      which does this for you) before provisioning any host.

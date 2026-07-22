@@ -1,0 +1,49 @@
+-- Halcyon intranet schema + seed data. Regenerated fresh on every deploy from
+-- the randomized secrets, so shipment IDs/refs stay stable across deploys but
+-- credentials and flag tokens never do.
+
+DROP TABLE IF EXISTS shipments;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS integrations;
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    role TEXT NOT NULL,
+    ops_team TEXT NOT NULL
+);
+
+CREATE TABLE shipments (
+    id SERIAL PRIMARY KEY,
+    reference TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    status TEXT NOT NULL,
+    ops_team TEXT NOT NULL,
+    internal_notes TEXT
+);
+
+-- Legacy sync integration table: cached AD service credential, reachable via
+-- the SQLi in /search when that path is live (UNION-based extraction).
+CREATE TABLE integrations (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    ad_bind_dn TEXT,
+    ad_bind_password TEXT,
+    notes TEXT
+);
+
+INSERT INTO users (username, password, role, ops_team) VALUES
+    ('m.silva', '{{ halcyon_creds["m.silva"] }}', 'staff', 'IT-Support'),
+    ('j.oduya', '{{ halcyon_creds["j.oduya"] }}', 'staff', 'Dispatch'),
+    ('r.tan', '{{ halcyon_creds["r.tan"] }}', 'staff', 'Finance'),
+    ('k.ahmadi', '{{ halcyon_creds["k.ahmadi"] }}', 'ops-admin', 'IT-Infra');
+
+INSERT INTO shipments (reference, destination, status, ops_team, internal_notes) VALUES
+    ('HLC-10231', 'Rotterdam, NL', 'in_transit', 'Dispatch', 'Customer requested SMS updates only.'),
+    ('HLC-10245', 'Singapore, SG', 'delivered', 'Finance', 'Invoice pending reconciliation.'),
+    ('HLC-10298', 'Mombasa, KE', 'delayed', 'IT-Infra', 'Held at customs; ops-admin escalation required.'),
+    ('HLC-10310', 'Rotterdam, NL', 'in_transit', 'Dispatch', 'Standard delivery.');
+
+INSERT INTO integrations (name, ad_bind_dn, ad_bind_password, notes) VALUES
+    ('legacy-ad-sync', 'CN=Web Bind Service,OU=Service Accounts,OU=Halcyon,{{ domain_dn }}', '{{ halcyon_creds["svc-webbind"] }}', 'nightly LDAP sync, do not disable');
