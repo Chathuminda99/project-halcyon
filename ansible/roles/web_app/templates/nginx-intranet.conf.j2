@@ -6,6 +6,20 @@ server {
     ssl_certificate     /etc/ssl/certs/intranet.crt;
     ssl_certificate_key /etc/ssl/private/intranet.key;
 
+{% if 'web_git_backup_disclosure' in halcyon_live_paths %}
+    # Misconfiguration (live this deployment): the app's .git directory is
+    # served directly instead of being blocked, because this location was
+    # added ahead of the catch-all proxy below and nobody remembered to deny
+    # dotfiles. config.py.bak itself was deleted from the working tree after
+    # being committed (see ansible/roles/web_app/tasks/main.yml) - it's only
+    # recoverable from history via this exposed .git, which is the intended
+    # exercise (git-dumper / git log -p / git show).
+    location ~ /\.git {
+        root /var/www/intranet;
+        autoindex on;
+    }
+{% endif %}
+
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;

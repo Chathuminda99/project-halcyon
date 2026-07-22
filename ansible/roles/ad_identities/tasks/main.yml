@@ -103,16 +103,19 @@
   when: "'rbcd_web_to_ws01' in halcyon_live_paths"
   changed_when: true
 
-# --- Credential exposure: secrets left in AD object descriptions and a share ---
+# --- Credential exposure: secrets left in AD object descriptions and SYSVOL ---
 - name: Leave a decoy credential hint in svc-scan's description (dead end)
   microsoft.ad.user:
     name: svc-scan
     description: "temp pw Halcyon2019! - CHANGE ME (ticket #4471, unresolved)"
-  when: "'svc-scan' in service_accounts | map(attribute='sam') | list"
 
-- name: Create a GPP-style legacy share with a stale credential file (real, working hop)
+# SYSVOL is world-readable to Domain Users by default (\\{{ domain_name }}\SYSVOL),
+# so anything dropped here is real, reachable loot for any authenticated
+# domain principal - no extra share configuration needed, unlike a share
+# under C:\Shares which would need its own explicit SMB share + ACL.
+- name: Create a legacy scripts folder in SYSVOL with stale deploy notes (real, working hop)
   ansible.windows.win_file:
-    path: 'C:\Shares\ITOps\legacy'
+    path: 'C:\Windows\SYSVOL\domain\scripts\legacy'
     state: directory
 
 - name: Drop legacy deploy notes referencing svc-deploy credential pattern
@@ -123,4 +126,4 @@
       svc-deploy account is used by the old CI box (decommissioned).
       If Jenkins ever comes back online the bind password follows the
       same rotation pattern as our other service accounts this quarter.
-    dest: 'C:\Shares\ITOps\legacy\deploy-notes.txt'
+    dest: 'C:\Windows\SYSVOL\domain\scripts\legacy\deploy-notes.txt'

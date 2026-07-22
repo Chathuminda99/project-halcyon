@@ -7,7 +7,11 @@ configuration/logic-class bug (OWASP-style), not a dependency CVE:
 
   - Broken access control / IDOR on shipment detail lookup
   - SSRF in the "import manifest from URL" feature (reachable due to the BAC bug)
-  - Unrestricted file upload on the proof-of-delivery photo endpoint
+  - OS command injection in proof-of-delivery photo thumbnail generation: the
+    saved file path is sanitized, but the *original* client-supplied filename
+    is passed unsanitized into a shelled-out `convert` (ImageMagick) call for
+    the thumbnail name — a realistic downstream-processing bug, not a
+    dependency CVE and not a naive "upload a .php shell" trick
   - SQL injection in the shipment search (raw string query building)
   - A stored AD service-account credential, readable via the SQLi
 
@@ -16,7 +20,6 @@ HALCYON_LIVE_PATHS environment variable (space-separated path IDs), set by
 ansible/roles/web_app from the per-deploy randomized selection.
 """
 import os
-import re
 import subprocess
 import uuid
 from functools import wraps
@@ -161,9 +164,13 @@ def import_manifest(shipment_id):
 
 
 # ---------------------------------------------------------------------------
-# VULN 3: Unrestricted file upload for proof-of-delivery photos.
-# Only a client-side accept=".jpg,.png" hint; server does no content-type or
-# extension enforcement, and serves the upload directory directly.
+# VULN 3: proof-of-delivery photo upload. The stored file itself is saved
+# safely (secure_filename + a random prefix, so path traversal / overwrite
+# isn't the bug). The bug is in the thumbnail generation step below: it
+# shells out to ImageMagick's `convert` using the *original* client-supplied
+# filename, unsanitized, to name the thumbnail — classic OS command
+# injection via a filename nobody thought to treat as attacker input once it
+# left the "is this a safe path" check.
 # ---------------------------------------------------------------------------
 @app.route("/shipment/<int:shipment_id>/upload-pod", methods=["POST"])
 @login_required
@@ -172,13 +179,25 @@ def upload_pod(shipment_id):
     if not file or file.filename == "":
         return {"error": "no file"}, 400
 
-    # BUG: secure_filename is applied to the name but extension/content is
-    # never validated, and the directory is directly web-served.
-    filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
-    path = os.path.join(UPLOAD_DIR, filename)
+    original_name = file.filename  # untrusted; reused unsanitized below
+    stored_name = f"{uuid.uuid4().hex}_{secure_filename(original_name)}"
+    path = os.path.join(UPLOAD_DIR, stored_name)
     file.save(path)
 
-    return {"stored_as": filename, "url": url_for("uploaded_file", filename=filename)}
+    if "web_idor_ssrf_upload" in LIVE_PATHS:
+        # BUG: original_name is attacker-controlled and never sanitized here.
+        thumb_cmd = (
+            f"convert '{path}' -resize 200x200 "
+            f"'{UPLOAD_DIR}/thumb_{original_name}' 2>/tmp/halcyon_thumb.log"
+        )
+        subprocess.run(thumb_cmd, shell=True, timeout=10, check=False)
+    else:
+        subprocess.run(
+            ["convert", path, "-resize", "200x200", f"{path}.thumb.jpg"],
+            timeout=10, check=False,
+        )
+
+    return {"stored_as": stored_name, "url": url_for("uploaded_file", filename=stored_name)}
 
 
 @app.route("/uploads/<path:filename>")
