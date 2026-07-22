@@ -22,16 +22,53 @@ vulnerability paths are active on every deploy — see `docs/architecture.md` fo
 - VMware Workstation Pro 17.5.2+ (free for personal/commercial use, no license key)
 - Vagrant + `vagrant-vmware-desktop` plugin + Vagrant VMware Utility
 - Packer (to build the base images once)
-- Ansible (control node — can run from WSL/Linux/macOS; Windows targets are managed
-  over WinRM, Linux targets over SSH)
+- Ansible (control node — Ansible has no supported Windows control node; see
+  "Windows host" below for how that's handled)
 - Windows Server 2022 and Windows 11 evaluation ISOs (Microsoft eval, 180-day)
 - Host: ≥32 GB RAM, ≥250 GB free SSD, network access disabled to any real/production LAN
 
+## Windows host
+
+VMware Workstation (and therefore Vagrant/Packer, which drive it) only run on
+Windows here. Ansible has no supported Windows control node, so it runs from
+**WSL2** instead, as a step decoupled from Vagrant's own provisioner — the
+Vagrantfile intentionally has no built-in `ansible` provisioner block (see
+its header comment for why that specific combination doesn't work).
+
+Setup, once:
+1. Install VMware Workstation Pro, Vagrant, and Packer **natively on
+   Windows** (PowerShell/installer, not inside WSL2). Install the
+   `vagrant-vmware-desktop` plugin and the Vagrant VMware Utility per
+   HashiCorp's docs.
+2. Install **WSL2** with an Ubuntu distro: `wsl --install`.
+3. Inside that WSL2 Ubuntu shell, install Ansible + Python deps:
+   ```
+   sudo apt update && sudo apt install -y python3-pip git
+   pip3 install -r requirements-control.txt
+   ansible-galaxy collection install -r ansible/requirements.yml
+   ```
+4. Do all lab work — `scripts/*.sh`, `vagrant`, `packer` — from that **same
+   WSL2 terminal**. `vagrant`/`packer` resolve to their Windows `.exe` via
+   WSL interop automatically (so they still drive VMware Workstation on the
+   Windows side); `ansible-playbook` resolves to the WSL2-native install.
+5. Clone the repo inside the WSL2 filesystem (e.g. `~/project-halcyon`), not
+   under `/mnt/c/...` — much faster I/O and avoids Windows/Linux path
+   translation issues with Vagrant.
+
+One thing to verify once, not assume: WSL2 needs to reach the lab's
+host-only subnet (`10.20.10.0/24`) over the network for the Ansible step to
+connect. This normally works automatically — WSL2 NATs outbound traffic
+through the Windows host, which already has a route to that subnet via the
+VMware host-only adapter — but confirm with `ping 10.20.10.10` from WSL2
+after `vagrant up` before assuming the Ansible step will work.
+
 ## Quick start
+
+Run all of this from the WSL2 terminal described above.
 
 ```
 scripts/build-images.sh      # Packer: build the 3 base VM images (one-time, ~1-2h)
-scripts/deploy.sh            # Vagrant up + full Ansible provisioning + randomize + snapshot
+scripts/deploy.sh            # vagrant up, then Ansible provisioning + randomize + snapshot
 scripts/health.sh            # verify every host/service is reachable and correctly configured
 scripts/reset.sh             # revert all VMs to the clean, freshly-armed snapshot
 ```

@@ -1,7 +1,19 @@
 ---
 # Project Halcyon — top-level playbook.
-# Vagrant invokes this per-host via --limit, but the full run (all hosts) is
-# also valid standalone: `ansible-playbook -i ansible/inventory.yml ansible/site.yml`
+# Run explicitly after `vagrant up` (which only boots the VMs - see
+# Vagrantfile), normally via scripts/deploy.sh:
+#   ansible-playbook -i ansible/inventory.yml ansible/site.yml
+# The `attacker` group (Kali) is intentionally never targeted here - it's the
+# tester's own box, not a provisioned lab target.
+
+- name: Wait for guests to accept connections (right after vagrant up)
+  hosts: windows:linux
+  gather_facts: false
+  tasks:
+    - name: Wait for WinRM/SSH to come up
+      ansible.builtin.wait_for_connection:
+        delay: 10
+        timeout: 900
 
 - name: Guard - secrets seed must exist
   hosts: all

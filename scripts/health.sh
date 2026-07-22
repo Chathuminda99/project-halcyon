@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sanity-check that every host and service in the lab is up and reachable.
-# Run from a machine on the same host-only vmnet (normally: from ATTACK, or
-# from the Workstation host if it's routed onto vmnet20).
+# Run from a machine on the same host-only vmnet (from ATTACK, or from WSL2
+# on the Windows Workstation host - WSL2 can normally reach 10.20.10.0/24
+# through the Windows host's route to the VMware host-only adapter).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 

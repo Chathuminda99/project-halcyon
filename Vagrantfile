@@ -2,6 +2,16 @@
 # Project Halcyon — VMware Workstation topology.
 # Six VMs on one flat, isolated, host-only network. No firewall between hosts
 # (Windows Defender Firewall is disabled by the posture role; Defender AV stays on).
+#
+# This file ONLY defines VM lifecycle (boot, network, sizing) - it does NOT
+# provision them. On a Windows host, `vagrant` itself normally runs as a
+# native Windows binary, and Ansible has no supported Windows control node,
+# so Vagrant's built-in "ansible" provisioner cannot work here: it would try
+# to shell out to `ansible-playbook` on the same OS running `vagrant`, which
+# is Windows. Instead, provisioning is a separate, explicit step
+# (scripts/deploy.sh) run from WSL2, which drives `ansible-playbook`
+# (installed in WSL2) against the VM IPs over the network. See README.md's
+# "Windows host" section.
 
 require 'yaml'
 
@@ -49,13 +59,8 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
         node.vm.communicator = "ssh"
       end
 
-      node.vm.provision "ansible" do |ansible|
-        ansible.compatibility_mode = "2.0"
-        ansible.playbook = "ansible/site.yml"
-        ansible.inventory_path = "ansible/inventory.yml"
-        ansible.limit = name
-        ansible.extra_vars = { halcyon_deploy_seed: ENV.fetch("HALCYON_SEED", "") }
-      end
+      # No provisioner block here on purpose - see the header comment.
+      # scripts/deploy.sh runs `ansible-playbook` separately after `vagrant up`.
     end
   end
 end

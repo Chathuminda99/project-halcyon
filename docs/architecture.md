@@ -96,9 +96,15 @@ docs/                     this file, student-brief.md, answer-key.md (generated)
 
 ## Operating the lab
 
+On a Windows host, all of this runs from a WSL2 terminal — see the README's
+"Windows host" section for why (Vagrant/Packer drive VMware Workstation on
+the Windows side via WSL interop; Ansible runs natively in WSL2, since it
+has no supported Windows control node, as a step decoupled from Vagrant's
+own provisioner rather than the built-in `ansible` provisioner block).
+
 ```
 scripts/build-images.sh   # one-time: Packer base images -> Vagrant boxes
-scripts/deploy.sh         # randomize + vagrant up (full provision) + snapshot
+scripts/deploy.sh         # randomize + vagrant up + ansible-playbook + snapshot
 scripts/health.sh         # verify reachability/services
 scripts/reset.sh          # revert to the clean-armed snapshot (same seed)
 ```

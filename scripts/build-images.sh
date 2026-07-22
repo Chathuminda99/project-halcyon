@@ -4,6 +4,10 @@
 #   - Windows Server 2022 eval ISO + Windows 11 eval ISO downloaded locally
 #   - HALCYON_WIN2022_ISO / HALCYON_WIN11_ISO env vars pointing at them
 #   - Real iso_checksum values set in each packer/*/*.pkr.hcl (see packer/README.md)
+#
+# On Windows: run from WSL2 - `packer` and `vagrant` resolve to their
+# Windows-native .exe via WSL interop (both must run on the same OS as
+# VMware Workstation). No Ansible is involved in this script.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
