@@ -19,15 +19,37 @@ vulnerability paths are active on every deploy — see `docs/architecture.md` fo
 
 ## Requirements
 
-- VMware Workstation Pro 17.5.2+ (free for personal/commercial use, no license key)
+- VMware Workstation Pro 17.5.2+ (free for personal/commercial use, no license key) —
+  available for both Windows and Linux
 - Vagrant + `vagrant-vmware-desktop` plugin + Vagrant VMware Utility
 - Packer (to build the base images once)
-- Ansible (control node — Ansible has no supported Windows control node; see
-  "Windows host" below for how that's handled)
+- Ansible (control node — see "Windows host" below if that's you; native on Linux)
 - Windows Server 2022 and Windows 11 evaluation ISOs (Microsoft eval, 180-day)
 - Host: ≥32 GB RAM, ≥250 GB free SSD, network access disabled to any real/production LAN
 
-## Windows host
+## Host OS: Linux vs. Windows
+
+Both are supported — `vagrant-vmware-desktop` is HashiCorp's official plugin
+for VMware Workstation on either OS. Which path applies to you depends on
+where VMware Workstation itself is installed.
+
+### Linux host (simpler — everything native, no extra layer)
+
+Install VMware Workstation Pro, Vagrant (+ `vagrant-vmware-desktop` plugin +
+Vagrant VMware Utility), Packer, and Ansible directly on the Linux host:
+```
+pip3 install -r requirements-control.txt
+ansible-galaxy collection install -r ansible/requirements.yml
+```
+Then just run `scripts/*.sh` from that same shell — no WSL, no interop, no
+extra reachability checks. One caveat worth knowing before you're deep into
+a build: there are scattered community reports of `vagrant-vmware-desktop`
+hitting `vmrun`-related errors on some Linux setups (permissions on
+`/dev/vmmon`/`/dev/vmnet*`, or the Vagrant VMware Utility service not
+running). If `vagrant up` fails oddly, check the Vagrant VMware Utility's
+own service/logs before assuming it's this repo's config.
+
+### Windows host
 
 VMware Workstation (and therefore Vagrant/Packer, which drive it) only run on
 Windows here. Ansible has no supported Windows control node, so it runs from
@@ -64,7 +86,8 @@ after `vagrant up` before assuming the Ansible step will work.
 
 ## Quick start
 
-Run all of this from the WSL2 terminal described above.
+On Linux, run this directly. On Windows, run it from the WSL2 terminal
+described above.
 
 ```
 scripts/build-images.sh      # Packer: build the 3 base VM images (one-time, ~1-2h)

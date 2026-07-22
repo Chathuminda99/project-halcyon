@@ -4,14 +4,16 @@
 # (Windows Defender Firewall is disabled by the posture role; Defender AV stays on).
 #
 # This file ONLY defines VM lifecycle (boot, network, sizing) - it does NOT
-# provision them. On a Windows host, `vagrant` itself normally runs as a
-# native Windows binary, and Ansible has no supported Windows control node,
-# so Vagrant's built-in "ansible" provisioner cannot work here: it would try
-# to shell out to `ansible-playbook` on the same OS running `vagrant`, which
-# is Windows. Instead, provisioning is a separate, explicit step
-# (scripts/deploy.sh) run from WSL2, which drives `ansible-playbook`
-# (installed in WSL2) against the VM IPs over the network. See README.md's
-# "Windows host" section.
+# provision them. Provisioning is a separate, explicit `ansible-playbook`
+# step in scripts/deploy.sh, run after `vagrant up` rather than via Vagrant's
+# built-in "ansible" provisioner. That's a deliberate choice, not laziness:
+# on a Windows host, `vagrant` runs as a native Windows binary, and Ansible
+# has no supported Windows control node, so the built-in provisioner (which
+# shells out to `ansible-playbook` on the same OS running `vagrant`) simply
+# cannot work there - provisioning has to run from WSL2 instead. Keeping
+# both host OSes on one code path (this same decoupled flow) rather than
+# branching Windows vs. Linux behavior in the Vagrantfile itself. See
+# README.md's "Host OS: Linux vs. Windows" section.
 
 require 'yaml'
 
