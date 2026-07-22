@@ -4,6 +4,10 @@ packer {
       version = ">= 1.0.0"
       source  = "github.com/hashicorp/vmware"
     }
+    vagrant = {
+      version = ">= 1.1.0"
+      source  = "github.com/hashicorp/vagrant"
+    }
   }
 }
 
@@ -49,4 +53,9 @@ build {
     script = "packer/win2022/scripts/base-hardening-baseline.ps1"
   }
   provisioner "windows-restart" {}
+
+  post-processor "vagrant" {
+    output             = "packer/win11/halcyon-win11.box"
+    provider_override  = "vmware_desktop"
+  }
 }

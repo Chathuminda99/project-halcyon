@@ -18,13 +18,12 @@ Manual steps required before `scripts/build-images.sh` will work end-to-end
 5. **Ubuntu autoinstall password** — `packer/ubuntu2204/http/user-data` ships
    a placeholder bcrypt/sha512 hash for the `vagrant` user. Regenerate with
    `mkpasswd -m sha-512` (from `whois` package) before building.
-6. **Vagrant box packaging** — after each Packer build completes, the output
-   is a raw VMware VM directory, not yet a `.box`. Package it:
-   ```
-   vagrant package --base <vm-name-from-packer-output> --output halcyon-win2022.box
-   vagrant box add halcyon/win2022 halcyon-win2022.box
-   ```
-   Repeat for `win11` -> `halcyon/win11` and `ubuntu2204` -> `halcyon/ubuntu22`.
+6. **Vagrant box packaging** — handled automatically. Each `.pkr.hcl` has a
+   built-in `post-processor "vagrant"` (`provider_override = "vmware_desktop"`)
+   that emits a ready-to-use `.box` file directly next to the template
+   (`packer/win2022/halcyon-win2022.box`, etc.) — no manual `vagrant package`
+   step needed. `scripts/build-images.sh` runs `vagrant box add` for you
+   right after each build.
 7. **Kali (ATTACK)** — not built via Packer; download the pre-built VMware
    image from kali.org/get-kali, import into Workstation, then either
    `vagrant box add kalilinux/rolling <exported .box>` or point the

@@ -4,6 +4,10 @@ packer {
       version = ">= 1.0.0"
       source  = "github.com/hashicorp/vmware"
     }
+    vagrant = {
+      version = ">= 1.1.0"
+      source  = "github.com/hashicorp/vagrant"
+    }
   }
 }
 
@@ -52,4 +56,9 @@ build {
   }
 
   provisioner "windows-restart" {}
+
+  post-processor "vagrant" {
+    output             = "packer/win2022/halcyon-win2022.box"
+    provider_override  = "vmware_desktop"
+  }
 }

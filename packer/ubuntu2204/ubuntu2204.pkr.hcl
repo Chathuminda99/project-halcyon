@@ -4,6 +4,10 @@ packer {
       version = ">= 1.0.0"
       source  = "github.com/hashicorp/vmware"
     }
+    vagrant = {
+      version = ">= 1.1.0"
+      source  = "github.com/hashicorp/vagrant"
+    }
   }
 }
 
@@ -53,5 +57,10 @@ build {
       "sudo apt-get -y install open-vm-tools",
       "echo 'vagrant ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/vagrant"
     ]
+  }
+
+  post-processor "vagrant" {
+    output             = "packer/ubuntu2204/halcyon-ubuntu2204.box"
+    provider_override  = "vmware_desktop"
   }
 }
